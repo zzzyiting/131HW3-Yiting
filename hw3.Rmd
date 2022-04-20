@@ -1,0 +1,262 @@
+---
+title: "hw3"
+author: "Yiting Zhang"
+date: '2022-04-20'
+output:
+  pdf_document: 
+    latex_engine: xelatex
+    keep_tex: yes
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+```{r,include=FALSE}
+library(tidymodels)
+library(tidyverse)
+library(corrr)
+library(MASS)
+library(ISLR)
+library(discrim)
+library(klaR)
+tidymodels_prefer()
+```
+
+```{r}
+titanic <- read.csv(file='titanic.csv')
+titanic$survived <- factor(titanic$survived, levels=c ('Yes','No')) 
+titanic<-titanic%>%mutate(titanic$survived)%>%mutate(pclass=factor(titanic$pclass))
+#levels(titanic$survived)
+#head(titanic)
+```
+
+
+
+### Question 1
+```{r}
+# Stratified Sampling
+set.seed(3435)
+titanic_split <- initial_split(titanic, strata = survived, prop = 0.8)
+titanic_split
+
+titanic_train <- training(titanic_split)
+titanic_test <- testing(titanic_split)
+
+data<-dim(titanic)[1]
+train<-dim(titanic_train)[1]
+test<-dim(titanic_test)[1]
+train/data
+test/data
+```
+
+We can verify that the training and testing data sets have the appropriate number of observations by calculating the ratio above.
+
+In both the testing and training data, stratified sampling will retain the real ratio of Survived,avoiding sampling error in which one dataset has more observations where Survived is Yes than the other dataset.
+
+```{r}
+sum (is.na(titanic_train))
+```
+There are 701 missing data in our titanic training dataset. This will influence our model. But overall, the stratified sampling method is a good idea. It enables us to collect a representative sample of the full observation under investigation.
+
+### Question 2
+
+```{r}
+# Explore Distribution
+titanic_train %>% ggplot(aes(x=survived)) + geom_bar()
+```
+
+We can observe from the plot that about over 450 the passengers in the training dataset did not survive while only approximately 250 passengers survived.
+
+
+### Question 3
+
+
+```{r}
+# Visualization
+cor_titanic <- titanic_train %>%
+  select(where(is.numeric)) %>%
+  correlate()
+rplot(cor_titanic)
+```
+
+
+```{r}
+cor_titanic %>%
+  stretch() %>%
+  ggplot(aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = as.character(fashion(r))))
+
+```
+Number of parents/children on board and number of siblings/spouses on board are positively correlated. Number of parents/children on board and fare are slightly positively correlated. Age and number of siblings/spouses on board are negatively correlated. Number of parents/children and age are negatively correlated.Passenger ID almost have no correlation with any other predictors.
+
+### Question 4
+
+```{r}
+# Recipe
+titanic_recipe <- recipe(survived ~ pclass + sex + age + sib_sp + parch + fare,
+                         data = titanic_train) %>%
+  step_impute_linear(age) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_interact(terms = ~ starts_with("sex"):fare) %>%
+  step_interact(terms = ~ age:fare)
+```
+
+### Question 5
+```{r}
+# Specify an Engine
+log_reg <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+# Workflow
+log_wkflow <- workflow() %>%
+  add_model(log_reg) %>%
+  add_recipe(titanic_recipe)
+
+log_fit <- fit(log_wkflow, titanic_train)
+
+# Model Results
+log_fit %>%
+  tidy()
+
+```
+
+
+### Question 6
+```{r}
+# LDA
+lda_mod <- discrim_linear() %>%
+  set_mode("classification") %>%
+  set_engine("MASS")
+
+lda_wkflow <- workflow() %>%
+  add_model(lda_mod) %>%
+  add_recipe(titanic_recipe)
+
+lda_fit <- fit(lda_wkflow, titanic_train)
+```
+
+
+
+### Question 7
+```{r}
+# QDA
+qda_mod <- discrim_quad() %>%
+  set_mode("classification") %>%
+  set_engine("MASS")
+
+qda_wkflow <- workflow() %>%
+  add_model(qda_mod) %>%
+  add_recipe(titanic_recipe)
+
+qda_fit <- fit(qda_wkflow, titanic_train)
+```
+
+
+### Question 8
+```{r}
+# Naive Bayes
+nb_mod <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("klaR") %>%
+  set_args(usekernel = FALSE)
+
+nb_wkflow <- workflow() %>%
+  add_model(nb_mod) %>%
+  add_recipe(titanic_recipe)
+
+nb_fit <- fit(nb_wkflow, titanic_train)
+```
+
+
+### Question 9
+
+```{r}
+log_predict<-predict(log_fit, new_data = titanic_train, type = "prob")
+
+log_reg_acc <- augment(log_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+log_reg_acc
+```
+
+
+```{r}
+lda_predict<-predict(lda_fit, new_data = titanic_train, type = "prob")
+
+lda_acc <- augment(lda_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+lda_acc
+
+```
+
+
+```{r}
+qda_predict<-predict(qda_fit, new_data = titanic_train, type = "prob")
+
+qda_acc <- augment(qda_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+qda_acc
+
+```
+
+
+```{r}
+nb_predict<-predict(nb_fit, new_data = titanic_train, type = "prob")
+
+nb_acc <- augment(nb_fit, new_data = titanic_train) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+nb_acc
+```
+
+```{r}
+pred_df <- bind_cols(log_predict, lda_predict, qda_predict, nb_predict, titanic_train$survived)
+names <- c("Logistic Regression", "Linear Discriminant Analysis", "Quadratic Discriminant Analysis", "Naive Bayes", "Actual Data")
+colnames(pred_df)%>%names
+pred_df
+```
+
+```{r}
+# Comparing Model Performance
+accuracies <- c(log_reg_acc$.estimate, lda_acc$.estimate,
+                nb_acc$.estimate, qda_acc$.estimate)
+models <- c("Logistic Regression", "LDA", "Naive Bayes", "QDA")
+results <- tibble(accuracies = accuracies, models = models)
+results %>%
+  arrange(-accuracies)
+
+```
+
+Therefore, by comparing the four models, we find that logistic regression model got the highest accuracy on the training data.
+
+
+### Question 10
+```{r}
+# Fitting to Testing Data
+predict(log_fit, new_data = titanic_test, type = "prob")
+
+# Check testing accuracy
+multi_metric <- metric_set(accuracy, sensitivity, specificity)
+
+augment(log_fit, new_data = titanic_train) %>%
+  multi_metric(truth = survived, estimate = .pred_class)
+
+augment(log_fit, new_data = titanic_test) %>%
+  multi_metric(truth = survived, estimate = .pred_class)
+
+
+# View the confusion matrix on the testing data
+augment(log_fit, new_data = titanic_test) %>%
+  conf_mat(truth = survived, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+
+# ROC curve on the testing data
+augment(log_fit, new_data = titanic_test) %>%
+  roc_curve(survived, .pred_Yes) %>%
+  autoplot()
+# Area under the ROC curve (AUC)
+augment(log_fit, new_data = titanic_test) %>%
+  roc_auc(survived, .pred_Yes)
+
+```
+The training accuracy is 0.816 and the testing accuracy is 0.782. The high accuracy indicates that the model perform well in this case. And the higher accuracy in training dataset is reasonable because it the model is fitted better on the traning dataset. And the AUC score looks good. Thus the model is usable.
